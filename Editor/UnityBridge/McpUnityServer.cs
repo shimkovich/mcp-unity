@@ -470,6 +470,14 @@ namespace McpUnity.Unity
             if (Application.isBatchMode || _instance == null) return;
             
             McpLogger.LogInfo("Editor is quitting. Ensuring server is stopped.");
+            try
+            {
+                if (System.IO.File.Exists(McpUnitySocketHandler.PendingResponsesPath))
+                {
+                    System.IO.File.Delete(McpUnitySocketHandler.PendingResponsesPath);
+                }
+            }
+            catch { /* Best-effort cleanup */ }
             _instance.Dispose();
         }
 

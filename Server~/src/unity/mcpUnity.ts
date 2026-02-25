@@ -149,8 +149,10 @@ export class McpUnity {
 
       this.connection.on('error', (error: McpUnityError) => {
         this.logger.error(`Connection error: ${error.message}`);
-        // Reject pending requests on connection error
-        this.rejectAllPendingRequests(error);
+        // Don't reject pending requests here — let them survive reconnection.
+        // They will be resolved when Unity sends buffered responses after domain reload,
+        // rejected by their individual timeout timers if they expire,
+        // or rejected in handleStateChange when state becomes Disconnected.
       });
 
       this.logger.info('Attempting to connect to Unity WebSocket...');
@@ -215,10 +217,10 @@ export class McpUnity {
       if (change.reason?.includes('Max reconnection attempts')) {
         this.commandQueue.clear(change.reason);
       }
-      // Reject all pending requests when disconnected
-      this.rejectAllPendingRequests(
-        new McpUnityError(ErrorType.CONNECTION, change.reason || 'Connection lost')
-      );
+      // Don't reject pending requests here — they have their own timeout timers.
+      // During domain reload, Unity buffers responses to a file and flushes them
+      // when the WebSocket reconnects. Rejecting here would lose those responses.
+      // If the connection is truly dead, individual request timeouts will clean up.
     }
   }
 

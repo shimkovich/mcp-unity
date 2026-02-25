@@ -14,6 +14,7 @@ using Unity.EditorCoroutines.Editor;
 using System.Collections;
 using System.Collections.Specialized;
 using McpUnity.Utils;
+using System.IO;
 
 namespace McpUnity.Unity
 {
@@ -50,6 +51,71 @@ namespace McpUnity.Unity
             };
         }
         
+        /// <summary>
+        /// File path for buffering responses that failed to send due to domain reload.
+        /// Uses Library/ so it survives domain reload but is ignored by version control.
+        /// </summary>
+        internal static readonly string PendingResponsesPath =
+            Path.Combine("Library", "McpPendingResponses.json");
+
+        private static readonly object _bufferLock = new object();
+
+        /// <summary>
+        /// Buffer a response string to a file for delivery after reconnection.
+        /// Thread-safe: can be called from WebSocket threads.
+        /// </summary>
+        internal static void BufferResponse(string responseStr)
+        {
+            lock (_bufferLock)
+            {
+                try
+                {
+                    var json = File.Exists(PendingResponsesPath)
+                        ? File.ReadAllText(PendingResponsesPath)
+                        : "[]";
+                    var arr = JArray.Parse(json);
+                    arr.Add(responseStr);
+                    File.WriteAllText(PendingResponsesPath, arr.ToString(Formatting.None));
+                    McpLogger.LogInfo("Buffered response for delivery after reconnection");
+                }
+                catch (Exception ex)
+                {
+                    McpLogger.LogError($"Failed to buffer response: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drain all buffered responses from file and return them.
+        /// Thread-safe: can be called from WebSocket threads.
+        /// </summary>
+        internal static List<string> DrainBufferedResponses()
+        {
+            lock (_bufferLock)
+            {
+                var list = new List<string>();
+                try
+                {
+                    if (!File.Exists(PendingResponsesPath))
+                    {
+                        return list;
+                    }
+                    var json = File.ReadAllText(PendingResponsesPath);
+                    File.Delete(PendingResponsesPath);
+                    var arr = JArray.Parse(json);
+                    foreach (var item in arr)
+                    {
+                        list.Add(item.ToString());
+                    }
+                }
+                catch (Exception ex)
+                {
+                    McpLogger.LogError($"Failed to drain buffered responses: {ex.Message}");
+                }
+                return list;
+            }
+        }
+
         /// <summary>
         /// Handle incoming messages from WebSocket clients
         /// </summary>
@@ -99,15 +165,26 @@ namespace McpUnity.Unity
                 string responseStr = jsonRpcResponse.ToString(Formatting.None);
                 
                 McpLogger.LogInfo($"WebSocket message response for request ID '{requestId}': {responseStr}");
-                
-                // Send the response back to the client
-                Send(responseStr);
+
+                // Send the response back to the client.
+                // websocket-sharp's Send() is asynchronous and does not throw on failure —
+                // it fires OnError instead. So we must check connection state before sending.
+                // If the WebSocket is not alive (e.g. domain reload killed it), buffer the response
+                // so it can be flushed to the next client connection.
+                if (Context.WebSocket?.IsAlive == true)
+                {
+                    Send(responseStr);
+                }
+                else
+                {
+                    McpLogger.LogWarning($"WebSocket not alive for '{requestId}', buffering for reconnection");
+                    BufferResponse(responseStr);
+                }
             }
             catch (Exception ex)
             {
                 McpLogger.LogError($"Error processing message: {ex.Message}");
-                
-                Send(CreateErrorResponse($"Internal server error: {ex.Message}", "internal_error").ToString(Formatting.None));
+                // Don't try to Send() here — connection may be dead during domain reload
             }
         }
         
@@ -154,6 +231,24 @@ namespace McpUnity.Unity
             _server.Clients[ID] = clientName;
 
             McpLogger.LogInfo($"WebSocket client connected (ID: {ID}, Name: {(string.IsNullOrEmpty(clientName) ? "Unknown" : clientName)})");
+
+            // Flush any responses that were buffered during domain reload
+            var buffered = DrainBufferedResponses();
+            if (buffered.Count > 0)
+            {
+                McpLogger.LogInfo($"Flushing {buffered.Count} buffered response(s) to reconnected client");
+                foreach (var resp in buffered)
+                {
+                    try
+                    {
+                        Send(resp);
+                    }
+                    catch (Exception ex)
+                    {
+                        McpLogger.LogWarning($"Failed to flush buffered response: {ex.Message}");
+                    }
+                }
+            }
         }
         
         /// <summary>
@@ -172,7 +267,7 @@ namespace McpUnity.Unity
         /// <summary>
         /// Handle WebSocket errors
         /// </summary>
-        protected override void OnError(ErrorEventArgs e)
+        protected override void OnError(WebSocketSharp.ErrorEventArgs e)
         {
             McpLogger.LogError($"WebSocket error: {e.Message}");
         }
