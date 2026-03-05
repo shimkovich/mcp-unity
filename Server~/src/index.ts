@@ -143,6 +143,20 @@ async function shutdown() {
   process.exit(0);
 }
 
+// Idle timeout: exit if no MCP requests for 5 minutes.
+// Prevents zombie processes when Claude Code keeps the parent alive
+// but spawns a new MCP server for each conversation.
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+let idleTimer = setTimeout(shutdown, IDLE_TIMEOUT_MS);
+
+function resetIdleTimer() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(shutdown, IDLE_TIMEOUT_MS);
+}
+
+// Reset idle timer on any stdin data (MCP requests come via stdio)
+process.stdin.on('data', resetIdleTimer);
+
 // Start the server
 startServer();
 
