@@ -703,14 +703,15 @@ namespace McpUnity.Utils
                 throw new MissingMemberException("Claude Code config error: Could not find 'projects' entry in existing config.");
             }
 
-            string serverPath = GetServerPath();
-            string serverPathParent = Path.GetDirectoryName(serverPath)?.Replace("\\", "/");
-            var projectConfig = existingConfig["projects"][serverPathParent];
+            // Use the Unity project root as the lookup key (Application.dataPath returns "{projectRoot}/Assets")
+            string projectRoot = Path.GetDirectoryName(Application.dataPath)?.Replace("\\", "/");
+            var projectConfig = existingConfig["projects"][projectRoot];
 
             if (projectConfig == null)
             {
                 throw new MissingMemberException(
-                    $"Claude Code config error: Could not find project entry for parent directory '{serverPathParent}' in existing config."
+                    $"Claude Code config error: Could not find project entry for '{projectRoot}' in existing config. " +
+                    "Open Claude Code in your project directory first to create the project entry."
                 );
             }
 
