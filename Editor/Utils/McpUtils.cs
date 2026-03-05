@@ -34,7 +34,13 @@ namespace McpUnity.Utils
                         { "mcp-unity", new Dictionary<string, object>
                             {
                                 { "command", "node" },
-                                { "args", new[] { Path.Combine(GetServerPath(), "build", "index.js") } }
+                                { "args", new[] { Path.Combine(GetServerPath(), "build", "index.js") } },
+                                { "env", new Dictionary<string, string>
+                                    {
+                                        { "UNITY_PORT", McpUnitySettings.Instance.Port.ToString() },
+                                        { "UNITY_REQUEST_TIMEOUT", McpUnitySettings.Instance.RequestTimeoutSeconds.ToString() }
+                                    }
+                                }
                             }
                         }
                     }
@@ -216,12 +222,13 @@ namespace McpUnity.Utils
         }
         
         /// <summary>
-        /// Adds the MCP configuration to the Claude Code config file
+        /// Adds the MCP configuration to the Claude Code project-level .mcp.json file
         /// </summary>
         public static bool AddToClaudeCodeConfig(bool useTabsIndentation)
         {
-            string configFilePath = GetClaudeCodeConfigPath();
-            return AddToConfigFile(configFilePath, useTabsIndentation, "Claude Code");
+            string projectRoot = Path.GetDirectoryName(Application.dataPath);
+            string configFilePath = Path.Combine(projectRoot, ".mcp.json");
+            return AddToConfigFile(configFilePath, useTabsIndentation, "Claude Code (.mcp.json)");
         }
 
         /// <summary>
