@@ -163,22 +163,45 @@ namespace McpUnity.Unity
                 return;
             }
 
-            try
+            var host = McpUnitySettings.Instance.AllowRemoteConnections ? "0.0.0.0" : "localhost";
+            int startPort = McpUnitySettings.Instance.Port;
+            const int maxAttempts = 10;
+
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                var host = McpUnitySettings.Instance.AllowRemoteConnections ? "0.0.0.0" : "localhost";
-                _webSocketServer = new WebSocketServer($"ws://{host}:{McpUnitySettings.Instance.Port}");
-                _webSocketServer.ReuseAddress = true;
-                _webSocketServer.AddWebSocketService("/McpUnity", () => new McpUnitySocketHandler(this));
-                _webSocketServer.Start();
-                McpLogger.LogInfo($"WebSocket server started successfully on {host}:{McpUnitySettings.Instance.Port}.");
-            }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
-            {
-                McpLogger.LogError($"Failed to start WebSocket server: Port {McpUnitySettings.Instance.Port} is already in use. {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                McpLogger.LogError($"Failed to start WebSocket server: {ex.Message}\n{ex.StackTrace}");
+                int port = startPort + attempt;
+                try
+                {
+                    _webSocketServer = new WebSocketServer($"ws://{host}:{port}");
+                    _webSocketServer.ReuseAddress = true;
+                    _webSocketServer.AddWebSocketService("/McpUnity", () => new McpUnitySocketHandler(this));
+                    _webSocketServer.Start();
+
+                    if (port != startPort)
+                    {
+                        McpUnitySettings.Instance.Port = port;
+                        McpUnitySettings.Instance.SaveSettings();
+                        McpLogger.LogWarning($"Port {startPort} was in use. MCP Unity started on port {port}. Run 'Configure Claude Code' in Server Window to update .mcp.json.");
+                    }
+                    else
+                    {
+                        McpLogger.LogInfo($"WebSocket server started successfully on {host}:{port}.");
+                    }
+                    return;
+                }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+                {
+                    _webSocketServer = null;
+                    if (attempt == maxAttempts - 1)
+                    {
+                        McpLogger.LogError($"Failed to start WebSocket server: Ports {startPort}-{port} are all in use. {ex.Message}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    McpLogger.LogError($"Failed to start WebSocket server: {ex.Message}\n{ex.StackTrace}");
+                    return;
+                }
             }
         }
         
