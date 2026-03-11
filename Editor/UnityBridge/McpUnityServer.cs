@@ -148,14 +148,16 @@ namespace McpUnity.Unity
         /// Check if a port is actively in use by attempting a TCP connection.
         /// Returns true if another process is listening, false if the port is free
         /// (including TIME_WAIT state from a recently closed socket).
+        /// Uses explicit IPv4 127.0.0.1 because WebSocketSharp binds on IPv4
+        /// and "localhost" on macOS may resolve to ::1 (IPv6) first, missing the listener.
         /// </summary>
         private static bool IsPortInUse(int port)
         {
             try
             {
-                using (var client = new TcpClient())
+                using (var client = new TcpClient(AddressFamily.InterNetwork))
                 {
-                    client.Connect("localhost", port);
+                    client.Connect(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
                     return true;
                 }
             }
