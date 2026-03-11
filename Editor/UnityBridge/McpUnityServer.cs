@@ -180,7 +180,7 @@ namespace McpUnity.Unity
                     {
                         McpUnitySettings.Instance.Port = port;
                         McpUnitySettings.Instance.SaveSettings();
-                        McpLogger.LogWarning($"Port {startPort} was in use. MCP Unity started on port {port}. Run 'Configure Claude Code' in Server Window to update .mcp.json.");
+                        McpLogger.LogWarning($"Port {startPort} was in use. MCP Unity started on fallback port {port}.");
                     }
                     else
                     {
