@@ -145,29 +145,6 @@ namespace McpUnity.Unity
         }
         
         /// <summary>
-        /// Check if a port is actively in use by attempting a TCP connection.
-        /// Returns true if another process is listening, false if the port is free
-        /// (including TIME_WAIT state from a recently closed socket).
-        /// Uses explicit IPv4 127.0.0.1 because WebSocketSharp binds on IPv4
-        /// and "localhost" on macOS may resolve to ::1 (IPv6) first, missing the listener.
-        /// </summary>
-        private static bool IsPortInUse(int port)
-        {
-            try
-            {
-                using (var client = new TcpClient(AddressFamily.InterNetwork))
-                {
-                    client.Connect(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
-                    return true;
-                }
-            }
-            catch (SocketException)
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
         /// Start the WebSocket Server to communicate with Node.js
         /// </summary>
         public void StartServer()
@@ -193,24 +170,9 @@ namespace McpUnity.Unity
             for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
                 int port = startPort + attempt;
-
-                // Check if another process is actively listening on this port.
-                // We cannot rely on SocketException alone because ReuseAddress (SO_REUSEADDR)
-                // on macOS allows multiple processes to bind to the same port without error.
-                if (IsPortInUse(port))
-                {
-                    McpLogger.LogInfo($"Port {port} is already in use by another process, trying next port...");
-                    if (attempt == maxAttempts - 1)
-                    {
-                        McpLogger.LogError($"Failed to start WebSocket server: Ports {startPort}-{port} are all in use.");
-                    }
-                    continue;
-                }
-
                 try
                 {
                     _webSocketServer = new WebSocketServer($"ws://{host}:{port}");
-                    _webSocketServer.ReuseAddress = true;
                     _webSocketServer.AddWebSocketService("/McpUnity", () => new McpUnitySocketHandler(this));
                     _webSocketServer.Start();
 
