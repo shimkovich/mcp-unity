@@ -1,16 +1,26 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Logger } from '../utils/logger.js';
 import { McpUnityError, ErrorType } from '../utils/errors.js';
-import { promises as fs } from 'fs';
+import { promises as fs, accessSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { UnityConnection, ConnectionState, ConnectionStateChange, UnityConnectionConfig } from './unityConnection.js';
 import { CommandQueue, CommandQueueConfig, CommandQueueStats, QueuedCommand } from './commandQueue.js';
 
-// Resolve settings path relative to script location (Server~/build/unity/mcpUnity.js)
-// so it works regardless of cwd (Claude Code launches from project root, not Server~/)
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MCP_UNITY_SETTINGS_PATH = path.resolve(__dirname, '../../../ProjectSettings/McpUnitySettings.json');
+// Find McpUnitySettings.json by walking up from the script's directory.
+// Works regardless of cwd or build output depth.
+function findSettingsFile(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 10; i++) {
+    const candidate = path.join(dir, 'ProjectSettings', 'McpUnitySettings.json');
+    try { accessSync(candidate); return candidate; } catch {}
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.resolve(process.cwd(), 'ProjectSettings/McpUnitySettings.json');
+}
+const MCP_UNITY_SETTINGS_PATH = findSettingsFile();
 
 interface PendingRequest {
   resolve: (value: any) => void;
