@@ -181,8 +181,8 @@ process.on('uncaughtException', (error: NodeJS.ErrnoException) => {
   process.exit(1);
 });
 
-// Handle unhandled promise rejections
+// Handle unhandled promise rejections - log but don't crash.
+// Crashing kills the MCP server and puts the session into a permanent "failed" state.
 process.on('unhandledRejection', (reason) => {
   serverLogger.error('Unhandled rejection', reason);
-  process.exit(1);
 });
