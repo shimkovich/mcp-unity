@@ -416,7 +416,7 @@ export class McpUnity {
 
       throw new McpUnityError(
         ErrorType.CONNECTION,
-        `Not connected to Unity: ${error instanceof Error ? error.message : String(error)}`
+        `Not connected to Unity: ${error instanceof Error ? error.message : String(error)}. Unity may be reloading scripts. Wait a few seconds and retry.`
       );
     }
   }
@@ -431,7 +431,7 @@ export class McpUnity {
 
     return new Promise((resolve, reject) => {
       if (!this.connection || !this.isConnected) {
-        reject(new McpUnityError(ErrorType.CONNECTION, 'Not connected to Unity'));
+        reject(new McpUnityError(ErrorType.CONNECTION, 'Not connected to Unity. Unity may be reloading scripts (domain reload). Wait a few seconds and retry.'));
         return;
       }
 
@@ -440,7 +440,7 @@ export class McpUnity {
         if (this.pendingRequests.has(requestId)) {
           this.logger.error(`Request ${requestId} timed out after ${timeoutMs}ms`);
           this.pendingRequests.delete(requestId);
-          reject(new McpUnityError(ErrorType.TIMEOUT, 'Request timed out'));
+          reject(new McpUnityError(ErrorType.TIMEOUT, 'Request timed out. Unity may be busy with a domain reload or long operation. Wait a few seconds and retry.'));
 
           // Force reconnection on timeout (connection may be stale)
           if (this.connection) {
