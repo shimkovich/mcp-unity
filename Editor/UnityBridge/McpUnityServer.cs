@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using UnityEditor;
@@ -87,9 +88,11 @@ namespace McpUnity.Unity
         public bool IsListening => _webSocketServer?.IsListening ?? false;
 
         /// <summary>
-        /// Dictionary of connected clients with this server
+        /// Thread-safe dictionary of connected clients with this server.
+        /// WebSocketSharp dispatches OnOpen/OnClose on thread pool threads,
+        /// so concurrent access must be safe.
         /// </summary>
-        public Dictionary<string, string> Clients { get; } = new Dictionary<string, string>();
+        public ConcurrentDictionary<string, string> Clients { get; } = new ConcurrentDictionary<string, string>();
 
         /// <summary>
         /// Private constructor to enforce singleton pattern
@@ -492,14 +495,6 @@ namespace McpUnity.Unity
             if (Application.isBatchMode || _instance == null) return;
             
             McpLogger.LogInfo("Editor is quitting. Ensuring server is stopped.");
-            try
-            {
-                if (System.IO.File.Exists(McpUnitySocketHandler.PendingResponsesPath))
-                {
-                    System.IO.File.Delete(McpUnitySocketHandler.PendingResponsesPath);
-                }
-            }
-            catch { /* Best-effort cleanup */ }
             _instance.Dispose();
         }
 

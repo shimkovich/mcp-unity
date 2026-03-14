@@ -14,7 +14,6 @@ using Unity.EditorCoroutines.Editor;
 using System.Collections;
 using System.Collections.Specialized;
 using McpUnity.Utils;
-using System.IO;
 
 namespace McpUnity.Unity
 {
@@ -51,71 +50,6 @@ namespace McpUnity.Unity
             };
         }
         
-        /// <summary>
-        /// File path for buffering responses that failed to send due to domain reload.
-        /// Uses Library/ so it survives domain reload but is ignored by version control.
-        /// </summary>
-        internal static readonly string PendingResponsesPath =
-            Path.Combine("Library", "McpPendingResponses.json");
-
-        private static readonly object _bufferLock = new object();
-
-        /// <summary>
-        /// Buffer a response string to a file for delivery after reconnection.
-        /// Thread-safe: can be called from WebSocket threads.
-        /// </summary>
-        internal static void BufferResponse(string responseStr)
-        {
-            lock (_bufferLock)
-            {
-                try
-                {
-                    var json = File.Exists(PendingResponsesPath)
-                        ? File.ReadAllText(PendingResponsesPath)
-                        : "[]";
-                    var arr = JArray.Parse(json);
-                    arr.Add(responseStr);
-                    File.WriteAllText(PendingResponsesPath, arr.ToString(Formatting.None));
-                    McpLogger.LogInfo("Buffered response for delivery after reconnection");
-                }
-                catch (Exception ex)
-                {
-                    McpLogger.LogError($"Failed to buffer response: {ex.Message}");
-                }
-            }
-        }
-
-        /// <summary>
-        /// Drain all buffered responses from file and return them.
-        /// Thread-safe: can be called from WebSocket threads.
-        /// </summary>
-        internal static List<string> DrainBufferedResponses()
-        {
-            lock (_bufferLock)
-            {
-                var list = new List<string>();
-                try
-                {
-                    if (!File.Exists(PendingResponsesPath))
-                    {
-                        return list;
-                    }
-                    var json = File.ReadAllText(PendingResponsesPath);
-                    File.Delete(PendingResponsesPath);
-                    var arr = JArray.Parse(json);
-                    foreach (var item in arr)
-                    {
-                        list.Add(item.ToString());
-                    }
-                }
-                catch (Exception ex)
-                {
-                    McpLogger.LogError($"Failed to drain buffered responses: {ex.Message}");
-                }
-                return list;
-            }
-        }
-
         /// <summary>
         /// Handle incoming messages from WebSocket clients
         /// </summary>
@@ -166,20 +100,7 @@ namespace McpUnity.Unity
                 
                 McpLogger.LogInfo($"WebSocket message response for request ID '{requestId}': {responseStr}");
 
-                // Send the response back to the client.
-                // websocket-sharp's Send() is asynchronous and does not throw on failure —
-                // it fires OnError instead. So we must check connection state before sending.
-                // If the WebSocket is not alive (e.g. domain reload killed it), buffer the response
-                // so it can be flushed to the next client connection.
-                if (Context.WebSocket?.IsAlive == true)
-                {
-                    Send(responseStr);
-                }
-                else
-                {
-                    McpLogger.LogWarning($"WebSocket not alive for '{requestId}', buffering for reconnection");
-                    BufferResponse(responseStr);
-                }
+                Send(responseStr);
             }
             catch (Exception ex)
             {
@@ -190,33 +111,35 @@ namespace McpUnity.Unity
         
         /// <summary>
         /// Handle WebSocket connection open.
-        /// Closes any stale connections first to prevent file descriptor accumulation.
-        /// websocket-sharp uses Mono's IOSelector/select(), which crashes when FD
-        /// values exceed ~1024. Limiting to one active connection keeps FD usage bounded.
+        /// Supports multiple concurrent MCP clients (e.g. multiple Claude Code instances).
+        /// Cleans up only inactive (dead) sessions to prevent file descriptor accumulation
+        /// while keeping other active clients connected.
+        /// websocket-sharp uses Mono's IOSelector/select(), which can crash when FD
+        /// values exceed ~1024, so stale session cleanup is important.
         /// See: https://github.com/CoderGamester/mcp-unity/issues/110
         /// </summary>
         protected override void OnOpen()
         {
-            // Close any existing connections — MCP Unity is designed for one client at a time.
-            // This prevents file descriptor accumulation from reconnection cycles.
-            var staleIds = _server.Clients.Keys
-                .Where(id => id != ID)
-                .ToList();
-
-            if (staleIds.Count > 0)
+            // Clean up inactive (dead) sessions to prevent file descriptor accumulation.
+            // Only removes sessions that are no longer connected — active clients are preserved.
+            // Note: Do NOT use ActiveIDs here — it pings every client and blocks.
+            var inactiveIds = Sessions.InactiveIDs.ToList();
+            if (inactiveIds.Count > 0)
             {
-                foreach (var oldId in staleIds)
+                foreach (var oldId in inactiveIds)
                 {
+                    // Also remove from our tracking dictionary
+                    _server.Clients.TryRemove(oldId, out _);
                     try
                     {
-                        Sessions.CloseSession(oldId, CloseStatusCode.Normal, "Replaced by new connection");
+                        Sessions.CloseSession(oldId, CloseStatusCode.Normal, "Stale session cleanup");
                     }
                     catch (Exception ex)
                     {
                         McpLogger.LogWarning($"Error closing stale session {oldId}: {ex.Message}");
                     }
                 }
-                McpLogger.LogInfo($"Closed {staleIds.Count} stale connection(s) to accept new client");
+                McpLogger.LogInfo($"Cleaned up {inactiveIds.Count} inactive session(s)");
             }
 
             // Extract client name from the X-Client-Name header (if available)
@@ -227,28 +150,10 @@ namespace McpUnity.Unity
                 clientName = headers["X-Client-Name"];
             }
 
-            // Always add the client to the server's tracking dictionary
+            // Add the client to the server's tracking dictionary
             _server.Clients[ID] = clientName;
 
-            McpLogger.LogInfo($"WebSocket client connected (ID: {ID}, Name: {(string.IsNullOrEmpty(clientName) ? "Unknown" : clientName)})");
-
-            // Flush any responses that were buffered during domain reload
-            var buffered = DrainBufferedResponses();
-            if (buffered.Count > 0)
-            {
-                McpLogger.LogInfo($"Flushing {buffered.Count} buffered response(s) to reconnected client");
-                foreach (var resp in buffered)
-                {
-                    try
-                    {
-                        Send(resp);
-                    }
-                    catch (Exception ex)
-                    {
-                        McpLogger.LogWarning($"Failed to flush buffered response: {ex.Message}");
-                    }
-                }
-            }
+            McpLogger.LogInfo($"WebSocket client connected (ID: {ID}, Name: {(string.IsNullOrEmpty(clientName) ? "Unknown" : clientName)}, Total clients: {_server.Clients.Count})");
         }
         
         /// <summary>
@@ -257,11 +162,11 @@ namespace McpUnity.Unity
         protected override void OnClose(CloseEventArgs e)
         {
             _server.Clients.TryGetValue(ID, out string clientName);
-            
+
             // Remove the client from the server
-            _server.Clients.Remove(ID);
+            _server.Clients.TryRemove(ID, out _);
             
-            McpLogger.LogInfo($"WebSocket client '{clientName}' disconnected: {e.Reason}");
+            McpLogger.LogInfo($"WebSocket client '{clientName}' disconnected: {e.Reason} (Remaining clients: {_server.Clients.Count})");
         }
         
         /// <summary>
