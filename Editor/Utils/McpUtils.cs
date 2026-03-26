@@ -34,7 +34,8 @@ namespace McpUnity.Utils
                         { "mcp-unity", new Dictionary<string, object>
                             {
                                 { "command", "node" },
-                                { "args", new[] { Path.Combine(GetServerPath(), "build", "index.js") } }
+                                { "args", new[] { Path.Combine(GetServerPath(), "build", "index.js") } },
+                                { "cwd", Path.GetDirectoryName(Application.dataPath) }
                             }
                         }
                     }
@@ -76,9 +77,11 @@ namespace McpUnity.Utils
             string indexJsPath = Path.Combine(GetServerPath(), "build", "index.js").Replace("\\", "/");
             
             var sb = new System.Text.StringBuilder();
+            string projectRoot = Path.GetDirectoryName(Application.dataPath).Replace("\\", "/");
             sb.AppendLine("[mcp_servers.mcp-unity]");
             sb.AppendLine("command = \"node\"");
             sb.AppendLine($"args = [\"{indexJsPath}\"]");
+            sb.AppendLine($"cwd = \"{projectRoot}\"");
             return sb.ToString();
         }
 

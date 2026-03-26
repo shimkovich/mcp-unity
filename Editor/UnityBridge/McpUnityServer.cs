@@ -25,6 +25,11 @@ namespace McpUnity.Unity
         /// Unity is entering Play mode - clients should use fast polling instead of backoff
         /// </summary>
         public const ushort PlayMode = 4001;
+
+        /// <summary>
+        /// Client sent a project path that doesn't match this Unity editor's project
+        /// </summary>
+        public const ushort ProjectMismatch = 4002;
     }
 
     /// <summary>

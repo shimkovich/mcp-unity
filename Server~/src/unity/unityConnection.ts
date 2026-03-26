@@ -19,7 +19,9 @@ export enum ConnectionState {
  */
 export const UnityCloseCode = {
   /** Unity is entering Play mode - use fast polling instead of backoff */
-  PLAY_MODE: 4001
+  PLAY_MODE: 4001,
+  /** Client's project path doesn't match this Unity editor */
+  PROJECT_MISMATCH: 4002
 } as const;
 
 /**
@@ -40,6 +42,7 @@ export interface UnityConnectionConfig {
   port: number;
   requestTimeout: number;
   clientName?: string;
+  projectPath?: string;
 
   // Reconnection settings
   minReconnectDelay?: number;      // Default: 1000ms
@@ -209,11 +212,15 @@ export class UnityConnection extends EventEmitter {
       const wsUrl = `ws://${this.config.host}:${this.config.port}/McpUnity`;
       this.logger.debug(`Connecting to ${wsUrl}...`);
 
-      // Create connection options with headers for client identification
+      // Create connection options with headers for client identification and project validation
+      const headers: Record<string, string> = {
+        'X-Client-Name': this.config.clientName || ''
+      };
+      if (this.config.projectPath) {
+        headers['X-Project-Path'] = this.config.projectPath;
+      }
       const options: WebSocket.ClientOptions = {
-        headers: {
-          'X-Client-Name': this.config.clientName || ''
-        },
+        headers,
         origin: this.config.clientName || ''
       };
 
@@ -275,6 +282,12 @@ export class UnityConnection extends EventEmitter {
         if (event.code === UnityCloseCode.PLAY_MODE) {
           this.logger.info('Unity entering Play mode - using fast polling for reconnection');
           this.isPlayModeReconnect = true;
+        }
+
+        // Project mismatch — don't reconnect, this is the wrong Unity editor
+        if (event.code === UnityCloseCode.PROJECT_MISMATCH) {
+          this.logger.warn(`Project mismatch: ${event.reason}. This MCP server will not connect to this Unity editor.`);
+          this.isManualDisconnect = true; // prevent reconnection
         }
 
         // Clear WebSocket reference

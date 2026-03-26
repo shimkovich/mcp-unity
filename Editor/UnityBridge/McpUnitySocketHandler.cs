@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -142,12 +143,24 @@ namespace McpUnity.Unity
                 McpLogger.LogInfo($"Cleaned up {inactiveIds.Count} inactive session(s)");
             }
 
-            // Extract client name from the X-Client-Name header (if available)
-            string clientName = "";
+            // Extract headers
             NameValueCollection headers = Context.Headers;
-            if (headers != null && headers.Contains("X-Client-Name"))
+            string clientName = headers?["X-Client-Name"] ?? "";
+
+            // Validate project path if the client sent one
+            string clientProjectPath = headers?["X-Project-Path"] ?? "";
+            if (!string.IsNullOrEmpty(clientProjectPath))
             {
-                clientName = headers["X-Client-Name"];
+                string unityProjectPath = Path.GetDirectoryName(Application.dataPath);
+                string normalizedClient = NormalizePath(clientProjectPath);
+                string normalizedUnity = NormalizePath(unityProjectPath);
+                if (!string.Equals(normalizedClient, normalizedUnity, StringComparison.OrdinalIgnoreCase))
+                {
+                    McpLogger.LogWarning($"Rejected client '{clientName}' — project path mismatch (client: {clientProjectPath}, editor: {unityProjectPath})");
+                    Context.WebSocket.Close((ushort)UnityCloseCode.ProjectMismatch,
+                        $"Project mismatch: editor is {unityProjectPath}");
+                    return;
+                }
             }
 
             // Add the client to the server's tracking dictionary
@@ -259,6 +272,15 @@ namespace McpUnity.Unity
             }
             
             return jsonRpcResponse;
+        }
+
+        /// <summary>
+        /// Normalize a file path for comparison (resolve ., .., trailing slashes)
+        /// </summary>
+        private static string NormalizePath(string p)
+        {
+            if (string.IsNullOrEmpty(p)) return "";
+            return Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
     }
 }

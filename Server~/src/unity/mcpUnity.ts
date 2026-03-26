@@ -7,9 +7,15 @@ import { fileURLToPath } from 'url';
 import { UnityConnection, ConnectionState, ConnectionStateChange, UnityConnectionConfig } from './unityConnection.js';
 import { CommandQueue, CommandQueueConfig, CommandQueueStats, QueuedCommand } from './commandQueue.js';
 
-// Find McpUnitySettings.json by walking up from the script's directory.
-// Works regardless of cwd or build output depth.
+// Find McpUnitySettings.json.
+// Prefer process.cwd() (set by the MCP client to the project directory),
+// then walk up from the script's directory as a fallback.
 function findSettingsFile(): string {
+  // 1. Check cwd first — each MCP client instance runs from its own project dir
+  const cwdCandidate = path.resolve(process.cwd(), 'ProjectSettings/McpUnitySettings.json');
+  try { accessSync(cwdCandidate); return cwdCandidate; } catch {}
+
+  // 2. Walk up from script location (works when script is inside the project tree)
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 10; i++) {
     const candidate = path.join(dir, 'ProjectSettings', 'McpUnitySettings.json');
@@ -18,9 +24,19 @@ function findSettingsFile(): string {
     if (parent === dir) break;
     dir = parent;
   }
-  return path.resolve(process.cwd(), 'ProjectSettings/McpUnitySettings.json');
+  return cwdCandidate;
 }
 const MCP_UNITY_SETTINGS_PATH = findSettingsFile();
+
+// Derive the Unity project root from the settings file path.
+// Settings live at <projectRoot>/ProjectSettings/McpUnitySettings.json.
+function deriveProjectPath(): string | undefined {
+  const settingsDir = path.dirname(MCP_UNITY_SETTINGS_PATH);
+  if (path.basename(settingsDir) === 'ProjectSettings') {
+    return path.dirname(settingsDir);
+  }
+  return undefined;
+}
 
 interface PendingRequest {
   resolve: (value: any) => void;
@@ -141,12 +157,16 @@ export class McpUnity {
       this.clientName = clientName || '';
 
       // Create connection with configuration
+      const projectPath = deriveProjectPath();
+      if (projectPath) {
+        this.logger.info(`Project path: ${projectPath}`);
+      }
       const config: UnityConnectionConfig = {
         host: this.host,
         port: this.port,
         requestTimeout: this.requestTimeout,
         clientName: this.clientName,
-        // Use defaults for reconnection and heartbeat from UnityConnection
+        projectPath,
       };
 
       this.connection = new UnityConnection(this.logger, config);
